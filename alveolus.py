@@ -1,6 +1,7 @@
 import bpy
 import bmesh
 import math
+from copy import deepcopy as dcopy
 
 from mathutils import Vector, Matrix, Quaternion
 from math import radians
@@ -176,6 +177,16 @@ def make_bpvs():
     verts = [rot_mat @ v for v in make_tpvs()]
     return verts
     
+inch = 2.54/100
+w = 5.5 * inch
+
+def prv(name, indent, vector):
+    print (f"{' '*indent}{name}: ({vector[0]}, {vector[1]}, {vector[2]}) - {vector.length}")
+
+def pre(name, indent, edge):
+    vdiff = edge[1] - edge[0]
+    print (f"{' '*indent}{name}: ({edge[0][0]}, {edge[0][1]}, {edge[0][2]}); ({edge[1][0]}, {edge[1][1]}, {edge[1][2]}) len: {vdiff.length}")
+    
 def make_pentagon(mesh_name, obj_name, verts):
     faces = [[0, a, a + 1] for a in range(1, 4)]
     tzp = bpy.data.meshes.new(mesh_name)
@@ -188,19 +199,22 @@ def make_pentagon(mesh_name, obj_name, verts):
 def make_cylinder(mesh_name, obj_name, verts, radius):
     delta = verts[1] - verts[0]
     midpoint = (verts[0] + verts[1]) / 2
-    phi = math.atan2(delta[1], delta[0])
-    theta = math.acos(delta[2] / delta.length)
+    #phi = math.atan2(delta[1], delta[0])
+    #theta = math.acos(delta[2] / delta.length)
+    rotation_matrix = Vector((0,0,1)).rotation_difference(delta.normalized()).to_matrix()
     cyl_mesh = bpy.ops.mesh.primitive_cylinder_add(
         radius=radius, 
         depth=delta.length, 
         location=midpoint, 
-        rotation=(0, theta, phi),
+        rotation=rotation_matrix.to_euler(),
         vertices=16)
+    pre("hinge", 4, verts)
 
-inch = 2.54/100
-w = 5.5 * inch
+#def make_cyl2(name, verts, radius):
+#    delta = verts[1] - verts[0]
+#    bpy.ops.curve.
 
-def make_strut(verts, normal, rot_quat):
+def make_strut(verts, normal):
     mesh = bpy.data.meshes.new("StrutMesh")
     obj = bpy.data.objects.new("Strut", mesh)
     bpy.context.collection.objects.link(obj)
@@ -226,6 +240,8 @@ def make_strut(verts, normal, rot_quat):
     bpy.ops.object.mode_set(mode='OBJECT')
     obj.select_set(False)
     
+    bpy.context.view_layer.objects.active = None
+    return
     rot_obj = obj.copy()
     rot_obj.data = obj.data.copy()
     bpy.context.collection.objects.link(rot_obj)
@@ -233,76 +249,104 @@ def make_strut(verts, normal, rot_quat):
     rot_obj.rotation_quaternion = rot_quat @ rot_obj.rotation_quaternion
     bpy.context.view_layer.objects.active = None
     
-
+    
 
 def make_cross(edge, strut_length, centerpoint):
-    print (f"  Edge: v0: {edge[0]};    v1: {edge[1]}")
+    pre("interior edge", 2, edge)
+    #print (f"  Edge: v0: {edge[0]};    v1: {edge[1]}")
+    prv("centerpoint", 2, centerpoint)
+    #print (f"  center: {centerpoint}")
     midpoint = (edge[0] + edge[1]) / 2
-    print (f"  midpoint: {midpoint}")
-    d = edge[0].length     # dist from 0
-    v0n = edge[0].normalized()
-    v1n = edge[1].normalized()
+    prv("midpoint", 2, midpoint)
+    #print (f"  midpoint: {midpoint}")
+    #d = edge[0].length     # dist from 0
+    #v0n = (edge[0] - centerpoint).normalized()
+    #v1n = (edge[1] - centerpoint).normalized()
+    v0n = (edge[0]).normalized()
+    v1n = (edge[1]).normalized()
     theta = math.acos(Vector.dot(v0n, v1n))
-    print (f"  theta: {theta}")
+    #print (f"  theta: {theta/math.pi}pi")
     axis = Vector.cross(v0n, v1n).normalized()
     s = (edge[1] - midpoint).length
-    print (f"  s: {s}")
+    #print (f"  s: {s}")
     phi = math.pi / 2 - (theta / 2)
-    print (f"  phi: {phi}")
+    #print (f"  phi: {phi/math.pi}pi")
     k = math.sin(phi) * s
-    print (f"  k: {k}")
+    #print (f"  k: {k}")
     assert(k < strut_length)
     lam = math.acos(k / strut_length)
-    print (f"  lam: {lam}")
+    #print (f"  lam: {lam}")
     lower_hinge1 = -midpoint.normalized() * strut_length
     rot_mat_a = Matrix.Rotation(-(phi - lam), 3, axis)
     lower_hinge1 = rot_mat_a @ lower_hinge1
     rot_mat_b = Matrix.Rotation((radians(180) - theta), 3, axis)
     upper_hinge0 = rot_mat_b @ lower_hinge1
-    lower_hinge1 += midpoint - axis * inch*1.5
-    upper_hinge0 += midpoint - axis * inch*1.5
-    midpoint_pos = midpoint - axis * inch*1.5
+    lower_hinge1 += midpoint - axis * inch*1.625
+    upper_hinge0 += midpoint - axis * inch*1.625
+    midpoint_pos = midpoint - axis * inch*1.625
     
     lower_strut_axis = (lower_hinge1 - midpoint_pos).normalized()
     upper_strut_axis = (upper_hinge0 - midpoint_pos).normalized()
     crotch_axis = (((lower_hinge1 + upper_hinge0) / 2) - midpoint_pos).normalized()
-    wt = w / (2 * math.sin((math.pi - theta) / 2))
+    wt = w / 2 / math.sin((math.pi - theta) / 2)
     crotch_point = midpoint_pos + crotch_axis * wt
     shoulder_point = midpoint_pos - crotch_axis * wt
     lower_width_axis = Vector.cross(lower_strut_axis, axis)
     upper_width_axis = Vector.cross(upper_strut_axis, axis)
 
-    #rot_mat_c = Matrix.Rotation(radians(180), 4, midpoint.normalized())
-    rot_quat = Quaternion(midpoint.normalized(), radians(180))
+    rot_mat_c = Matrix.Rotation(radians(180), 4, midpoint.normalized())
     
-    verts = [
-        lower_hinge1 + lower_strut_axis * w / 2 + lower_width_axis * w / 2, 
+    verts0 = [
+        lower_hinge1 + lower_strut_axis * w / 2 + lower_width_axis * w / 4, 
+        lower_hinge1 + lower_strut_axis * w / 4 + lower_width_axis * w / 2, 
         shoulder_point,
-        upper_hinge0 + upper_strut_axis * w / 2 - upper_width_axis * w / 2,
-        upper_hinge0 + upper_strut_axis * w / 2 + upper_width_axis * w / 2,
+        upper_hinge0 + upper_strut_axis * w / 4 - upper_width_axis * w / 2,
+        upper_hinge0 + upper_strut_axis * w / 2 - upper_width_axis * w / 4,
+        
+        upper_hinge0 + upper_strut_axis * w / 2 + upper_width_axis * w / 4,
+        upper_hinge0 + upper_strut_axis * w / 4 + upper_width_axis * w / 2,
         crotch_point,
-        lower_hinge1 + lower_strut_axis * w / 2 - lower_width_axis * w / 2]
-    make_strut(verts, axis * inch * 1.5, rot_quat)
+        lower_hinge1 + lower_strut_axis * w / 4 - lower_width_axis * w / 2,
+        lower_hinge1 + lower_strut_axis * w / 2 - lower_width_axis * w / 4]
+    verts1 = [rot_mat_c @ v for v in verts0]
     
+    verts0 = [v + centerpoint for v in verts0]
+    verts1 = [v + centerpoint for v in verts1]
+    make_strut(verts0, axis * inch * 1.5)
+    make_strut(verts1, -axis * inch * 1.5)
     
-    #lower_hinge0 = rot_mat_c @ lower_hinge1
-    #upper_hinge1 = rot_mat_c @ upper_hinge0
-    #midpoint_neg = rot_mat_c @ midpoint_pos
+    lower_hinge0 = rot_mat_c @ lower_hinge1
+    upper_hinge1 = rot_mat_c @ upper_hinge0
     
-    #make_cylinder(f"strut_mesh", f"strut", (lower_hinge1, midpoint_pos), inch*1.5)
-    #make_cylinder(f"strut_mesh", f"strut", (lower_hinge0, midpoint_neg), inch*1.5)
-    #make_cylinder(f"strut_mesh", f"strut", (midpoint_pos, upper_hinge0), inch*1.5)
-    #make_cylinder(f"strut_mesh", f"strut", (midpoint_neg, upper_hinge1), inch*1.5)
+    make_cylinder("hinge_mesh", "hinge", [lower_hinge1 - axis * 0.25 * inch + centerpoint, lower_hinge1 + axis * 1.625 * inch + centerpoint], 2 * inch)
+    make_cylinder("hinge_mesh", "hinge", [upper_hinge0 - axis * 0.25 * inch + centerpoint, upper_hinge0 + axis * 1.625 * inch + centerpoint], 2 * inch)
+    make_cylinder("hinge_mesh", "hinge", [lower_hinge0 + axis * 0.25 * inch + centerpoint, lower_hinge0 - axis * 1.625 * inch + centerpoint], 3 * inch)
+    make_cylinder("hinge_mesh", "hinge", [upper_hinge1 + axis * 0.25 * inch + centerpoint, upper_hinge1 - axis * 1.625 * inch + centerpoint], 2 * inch)
+    make_cylinder("hinge_mesh", "hinge", [midpoint_pos - axis * 0.25 * inch + centerpoint, midpoint_pos + axis * 3.5 * inch + centerpoint], 1 * inch)
     
 
 # edge's verts [0, 1] must be equidistant from the center (0, 0, 0)        
-def make_crosses(edge, num_crosses, strut_length):
-    print (f"Edge: v0: {edge[0]};    v1: {edge[1]}")
-    d = edge[0].length     # dist from 0
+def make_crosses(edge, num_crosses, strut_length, case_pitch):
+    assert(num_crosses > 0)
+    pre("Polygon edge", 0, edge)
     v0n = edge[0].normalized()
     v1n = edge[1].normalized()
     theta = math.acos(Vector.dot(v0n, v1n))
-    axis = Vector.cross(v0n, v1n)
+    axis = Vector.cross(v0n, v1n).normalized()
+    prv("axis", 0, axis)
+    midpoint = (edge[1] + edge[0]) / 2
+    mid_axis = midpoint.normalized()
+    center_offset = case_pitch / 2 / math.sin(theta / 2)
+    center = mid_axis * center_offset
+    v0cross = Vector.cross(v0n, -axis).normalized()
+    v1cross = Vector.cross(v1n, axis).normalized()
+    
+    print (f"v0cross: {v0cross};    v1cross: {v1cross}")
+    
+    edge[0] -= center
+    edge[1] -= center
+    edge[0] += v0cross * case_pitch / 2
+    edge[1] += v1cross * case_pitch / 2
     sub_verts = []
     sub_verts.append(edge[0])
     for sub_edge in range(num_crosses - 1):
@@ -310,9 +354,14 @@ def make_crosses(edge, num_crosses, strut_length):
         sub_verts.append(rot_mat @ sub_verts[-1])
     sub_verts.append(edge[1])
     for sub_edge in range(len(sub_verts) - 1):
-        make_cross((sub_verts[sub_edge], sub_verts[sub_edge + 1]), strut_length, (0, 0, 0))
+        #make_cross((sub_verts[sub_edge] + center, sub_verts[sub_edge + 1] + center), 
+        #    strut_length, center)
+        make_cross((sub_verts[sub_edge], sub_verts[sub_edge + 1]), 
+            strut_length, center)
     
-
+def c(v: list):
+    return dcopy(v)
+    
 class Hedron:
     def __init__(self, location, z_angle, radius):
         self.hemigon_verts = []
@@ -346,20 +395,20 @@ class Hedron:
         self.bottom_verts =     [v * radius / v.length for v in self.bottom_verts]
             
         for n in range(10):
-            self.edges_hemigon.append((self.hemigon_verts[n], self.hemigon_verts[(n+1)%10]))
+            self.edges_hemigon.append([c(self.hemigon_verts[n]), c(self.hemigon_verts[(n+1)%10])])
             
         for n in range(5):
-            self.edges_level1_upper.append((self.hemigon_verts[(n*2)%10], self.mid_upper_verts[(n-1)%5]))
-            self.edges_level1_upper.append((self.hemigon_verts[(n*2+1)%10], self.mid_upper_verts[(n)%5]))
-            self.edges_level2_upper.append((self.mid_upper_verts[n], self.top_verts[(n+1)%5]))
-            self.edges_level2_upper.append((self.mid_upper_verts[(n+1)%5], self.top_verts[(n+1)%5]))
-            self.edges_top_pent.append((self.top_verts[n], self.top_verts[(n+1)%5]))
+            self.edges_level1_upper.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_upper_verts[(n-1)%5])])
+            self.edges_level1_upper.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_upper_verts[(n)%5])])
+            self.edges_level2_upper.append([c(self.mid_upper_verts[n]), c(self.top_verts[(n+1)%5])])
+            self.edges_level2_upper.append([c(self.mid_upper_verts[(n+1)%5]), c(self.top_verts[(n+1)%5])])
+            self.edges_top_pent.append([c(self.top_verts[n]), c(self.top_verts[(n+1)%5])])
 
-            self.edges_level1_lower.append((self.hemigon_verts[(n*2)%10], self.mid_lower_verts[(7-n)%5]))
-            self.edges_level1_lower.append((self.hemigon_verts[(n*2+1)%10], self.mid_lower_verts[(7-n)%5]))
-            self.edges_level2_lower.append((self.mid_lower_verts[n], self.bottom_verts[(n+1)%5]))
-            self.edges_level2_lower.append((self.mid_lower_verts[(n+1)%5], self.bottom_verts[(n+1)%5]))
-            self.edges_bottom_pent.append((self.bottom_verts[n], self.bottom_verts[(n+1)%5]))
+            self.edges_level1_lower.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_lower_verts[(7-n)%5])])
+            self.edges_level1_lower.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_lower_verts[(7-n)%5])])
+            self.edges_level2_lower.append([c(self.mid_lower_verts[n]), c(self.bottom_verts[(n+1)%5])])
+            self.edges_level2_lower.append([c(self.mid_lower_verts[(n+1)%5]), c(self.bottom_verts[(n+1)%5])])
+            self.edges_bottom_pent.append([c(self.bottom_verts[n]), c(self.bottom_verts[(n+1)%5])])
 
 
     def make_pents(self):
@@ -384,26 +433,101 @@ class Hedron:
         return itertools.chain(self.edges_hemigon, self.edges_level1_upper, self.edges_level2_upper, 
             self.edges_top_pent, self.edges_level1_lower, self.edges_level2_lower, self.edges_bottom_pent)
     
+    def report_edges(self):
+        i = 0
+        for edge in self.iterate_edges():
+            pre(f"Edge{i}", 0, edge)
+            i+=1
+    
     def make_cyls(self):
         for edge in self.iterate_edges():
             make_cylinder(f"cyl_mesh", f"cyl", edge, 0.02)
     
-    def make_crosses(self, num_segments_per_edge, strut_length):
+    def make_crosses(self, num_segments_per_edge, strut_length, case_pitch):
+        i = 0
         for edge in self.iterate_edges():
-            make_crosses(edge, num_segments_per_edge, strut_length)
+            pre(f"Edge{i}", 0, edge)
+            make_crosses(edge, num_segments_per_edge, strut_length, case_pitch)
+            #i += 1
+            #if i == 3:
+            #    return
             
+
+tau = math.pi * 2
+theta = tau / 10
+
+def get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max):
+    # lol here we go
+    theta_t = theta / num_struts
+    theta_tt = theta_t / 2
+    rd = case_pitch / 2 / math.tan(theta / 2)
+    beta = tau / 4 + theta_tt
+    
+    def make_len(alpha):
+        gamma = tau / 2 - beta - alpha
+        et2 = strut_length * math.sin(gamma) / math.sin(beta)
+        rt = et2 / math.sin(theta_tt)
+        r = rt + rd
+        return r
+        
+    long_r = make_len(alpha_min)
+    short_r = make_len(alpha_max)
+    
+    print (f"long_r: {long_r}; short_r: {short_r}")
+    
+    return (long_r, short_r)
+        
 
 def reset_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)       
 
 def make_icosidodecahedron():
+    making_extents_1 = False
+    making_extents_2 = False
+    making_extents_3 = True
+    
+    if making_extents_3:
+        num_struts = 3
+        strut_length = 46*inch
+        case_pitch = 12*inch
+        alpha_min = radians(10)
+        alpha_max = tau / 4 - theta / num_struts - radians(5)
+        long_r, short_r = get_extents(3, strut_length, case_pitch, alpha_min, alpha_max)
+        h = Hedron((0, 0, 0), 0, long_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        h = Hedron((0, 0, 0), 0, short_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+
+    if making_extents_2:
+        num_struts = 2
+        strut_length = 74*inch
+        case_pitch = 12*inch
+        alpha_min = radians(10)
+        alpha_max = tau / 4 - theta / num_struts - radians(5)
+        long_r, short_r = get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max)
+        h = Hedron((0, 0, 0), 0, long_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        h = Hedron((0, 0, 0), 0, short_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+
+    
+    if making_extents_1:
+        num_struts = 1
+        strut_length = 74*inch
+        case_pitch = 12*inch
+        alpha_min = radians(10)
+        alpha_max = tau / 4 - theta / num_struts - radians(5)
+        long_r, short_r = get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max)
+        h = Hedron((0, 0, 0), 0, long_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        h = Hedron((0, 0, 0), 0, short_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        
+
     #h = Hedron((0, 0, 0), 0, phi)
-    h = Hedron((0, 0, 0), 0, 9.5)
-    h.make_crosses(3, 1)
-    h = Hedron((0, 0, 0), 0, 3)
-    h.make_crosses(3, 1)
     #h.make_pents()
     #h.make_cyls()
 
 #reset_scene()
 make_icosidodecahedron()
+print ("---------------------------------------------")
