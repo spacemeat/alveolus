@@ -241,15 +241,43 @@ def make_strut(verts, normal):
     obj.select_set(False)
     
     bpy.context.view_layer.objects.active = None
-    return
-    rot_obj = obj.copy()
-    rot_obj.data = obj.data.copy()
-    bpy.context.collection.objects.link(rot_obj)
-    rot_obj.rotation_mode = 'QUATERNION'
-    rot_obj.rotation_quaternion = rot_quat @ rot_obj.rotation_quaternion
+    
+
+def make_case_plate(corner, long_edge, short_edge, gauge_axis):
+    offset = gauge_axis * 0.25 *inch
+    verts = [corner + offset/2, corner + long_edge + offset/2, corner + long_edge + short_edge + offset/2, corner + short_edge + offset/2]
+    prv("case_plate", 4, verts[0])
+    prv("case_plate", 4, verts[1])
+    prv("case_plate", 4, verts[2])
+    prv("case_plate", 4, verts[3])
+    
+    mesh = bpy.data.meshes.new("CasePlateMesh")
+    obj = bpy.data.objects.new("CasePlate", mesh)
+    bpy.context.collection.objects.link(obj)
+    
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+
+    verts = [bm.verts.new(v) for v in verts]
+    
+    bm.faces.new(verts)
+    bm.to_mesh(mesh)
+    bm.free()
+    
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.extrude_region_move(
+        TRANSFORM_OT_translate={"value": -gauge_axis * offset}
+    )
+    
+    bpy.ops.object.mode_set(mode='OBJECT')
+    obj.select_set(False)
+    
     bpy.context.view_layer.objects.active = None
-    
-    
+
 
 def make_cross(edge, strut_length, centerpoint):
     pre("interior edge", 2, edge)
@@ -259,9 +287,6 @@ def make_cross(edge, strut_length, centerpoint):
     midpoint = (edge[0] + edge[1]) / 2
     prv("midpoint", 2, midpoint)
     #print (f"  midpoint: {midpoint}")
-    #d = edge[0].length     # dist from 0
-    #v0n = (edge[0] - centerpoint).normalized()
-    #v1n = (edge[1] - centerpoint).normalized()
     v0n = (edge[0]).normalized()
     v1n = (edge[1]).normalized()
     theta = math.acos(Vector.dot(v0n, v1n))
@@ -281,6 +306,7 @@ def make_cross(edge, strut_length, centerpoint):
     lower_hinge1 = rot_mat_a @ lower_hinge1
     rot_mat_b = Matrix.Rotation((radians(180) - theta), 3, axis)
     upper_hinge0 = rot_mat_b @ lower_hinge1
+    
     lower_hinge1 += midpoint - axis * inch*1.625
     upper_hinge0 += midpoint - axis * inch*1.625
     midpoint_pos = midpoint - axis * inch*1.625
@@ -320,10 +346,12 @@ def make_cross(edge, strut_length, centerpoint):
     
     make_cylinder("hinge_mesh", "hinge", [lower_hinge1 - axis * 0.25 * inch + centerpoint, lower_hinge1 + axis * 1.625 * inch + centerpoint], 2 * inch)
     make_cylinder("hinge_mesh", "hinge", [upper_hinge0 - axis * 0.25 * inch + centerpoint, upper_hinge0 + axis * 1.625 * inch + centerpoint], 2 * inch)
-    make_cylinder("hinge_mesh", "hinge", [lower_hinge0 + axis * 0.25 * inch + centerpoint, lower_hinge0 - axis * 1.625 * inch + centerpoint], 3 * inch)
+    make_cylinder("hinge_mesh", "hinge", [lower_hinge0 + axis * 0.25 * inch + centerpoint, lower_hinge0 - axis * 1.625 * inch + centerpoint], 2 * inch)
     make_cylinder("hinge_mesh", "hinge", [upper_hinge1 + axis * 0.25 * inch + centerpoint, upper_hinge1 - axis * 1.625 * inch + centerpoint], 2 * inch)
     make_cylinder("hinge_mesh", "hinge", [midpoint_pos - axis * 0.25 * inch + centerpoint, midpoint_pos + axis * 3.5 * inch + centerpoint], 1 * inch)
     
+    return (upper_hinge1 - axis * inch*1.625 + centerpoint, lower_hinge1 + axis * inch*1.625 + centerpoint)
+
 
 # edge's verts [0, 1] must be equidistant from the center (0, 0, 0)        
 def make_crosses(edge, num_crosses, strut_length, case_pitch):
@@ -353,11 +381,14 @@ def make_crosses(edge, num_crosses, strut_length, case_pitch):
         rot_mat = Matrix.Rotation(theta / num_crosses, 3, axis)
         sub_verts.append(rot_mat @ sub_verts[-1])
     sub_verts.append(edge[1])
+    uh = None
+    lh = None
     for sub_edge in range(len(sub_verts) - 1):
-        #make_cross((sub_verts[sub_edge] + center, sub_verts[sub_edge + 1] + center), 
-        #    strut_length, center)
-        make_cross((sub_verts[sub_edge], sub_verts[sub_edge + 1]), 
+        uh, lh = make_cross((sub_verts[sub_edge], sub_verts[sub_edge + 1]), 
             strut_length, center)
+    # make case
+    make_case_plate(uh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
+    make_case_plate(lh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
     
 def c(v: list):
     return dcopy(v)
@@ -449,7 +480,7 @@ class Hedron:
             pre(f"Edge{i}", 0, edge)
             make_crosses(edge, num_segments_per_edge, strut_length, case_pitch)
             #i += 1
-            #if i == 3:
+            #if i == 1:
             #    return
             
 
