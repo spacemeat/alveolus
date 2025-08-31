@@ -181,11 +181,12 @@ inch = 2.54/100
 w = 5.5 * inch
 
 def prv(name, indent, vector):
-    print (f"{' '*indent}{name}: ({vector[0]}, {vector[1]}, {vector[2]}) - {vector.length}")
+    print (f"{' '*indent}{name}: ({vector[0]}, {vector[1]}, {vector[2]}) len: {vector.length}")
 
 def pre(name, indent, edge):
     vdiff = edge[1] - edge[0]
     print (f"{' '*indent}{name}: ({edge[0][0]}, {edge[0][1]}, {edge[0][2]}); ({edge[1][0]}, {edge[1][1]}, {edge[1][2]}) len: {vdiff.length}")
+    print (f"{' '*indent}{name}: dist_from_0: {edge[0].length}; {edge[1].length}")
     
 def make_pentagon(mesh_name, obj_name, verts):
     faces = [[0, a, a + 1] for a in range(1, 4)]
@@ -278,6 +279,8 @@ def make_case_plate(corner, long_edge, short_edge, gauge_axis):
     
     bpy.context.view_layer.objects.active = None
 
+make_hinges = True
+make_case_plates = True
 
 def make_cross(edge, strut_length, centerpoint):
     pre("interior edge", 2, edge)
@@ -344,14 +347,14 @@ def make_cross(edge, strut_length, centerpoint):
     lower_hinge0 = rot_mat_c @ lower_hinge1
     upper_hinge1 = rot_mat_c @ upper_hinge0
     
-    make_cylinder("hinge_mesh", "hinge", [lower_hinge1 - axis * 0.25 * inch + centerpoint, lower_hinge1 + axis * 1.625 * inch + centerpoint], 2 * inch)
-    make_cylinder("hinge_mesh", "hinge", [upper_hinge0 - axis * 0.25 * inch + centerpoint, upper_hinge0 + axis * 1.625 * inch + centerpoint], 2 * inch)
-    make_cylinder("hinge_mesh", "hinge", [lower_hinge0 + axis * 0.25 * inch + centerpoint, lower_hinge0 - axis * 1.625 * inch + centerpoint], 2 * inch)
-    make_cylinder("hinge_mesh", "hinge", [upper_hinge1 + axis * 0.25 * inch + centerpoint, upper_hinge1 - axis * 1.625 * inch + centerpoint], 2 * inch)
-    make_cylinder("hinge_mesh", "hinge", [midpoint_pos - axis * 0.25 * inch + centerpoint, midpoint_pos + axis * 3.5 * inch + centerpoint], 1 * inch)
-    
+    if make_hinges:
+        make_cylinder("hinge_mesh", "hinge", [lower_hinge1 - axis * 0.25 * inch + centerpoint, lower_hinge1 + axis * 1.625 * inch + centerpoint], 2 * inch)
+        make_cylinder("hinge_mesh", "hinge", [upper_hinge0 - axis * 0.25 * inch + centerpoint, upper_hinge0 + axis * 1.625 * inch + centerpoint], 2 * inch)
+        make_cylinder("hinge_mesh", "hinge", [lower_hinge0 + axis * 0.25 * inch + centerpoint, lower_hinge0 - axis * 1.625 * inch + centerpoint], 2 * inch)
+        make_cylinder("hinge_mesh", "hinge", [upper_hinge1 + axis * 0.25 * inch + centerpoint, upper_hinge1 - axis * 1.625 * inch + centerpoint], 2 * inch)
+        make_cylinder("hinge_mesh", "hinge", [midpoint_pos - axis * 0.25 * inch + centerpoint, midpoint_pos + axis * 3.5 * inch + centerpoint], 2 * inch)
+        
     return (upper_hinge1 - axis * inch*1.625 + centerpoint, lower_hinge1 + axis * inch*1.625 + centerpoint)
-
 
 # edge's verts [0, 1] must be equidistant from the center (0, 0, 0)        
 def make_crosses(edge, num_crosses, strut_length, case_pitch):
@@ -387,13 +390,49 @@ def make_crosses(edge, num_crosses, strut_length, case_pitch):
         uh, lh = make_cross((sub_verts[sub_edge], sub_verts[sub_edge + 1]), 
             strut_length, center)
     # make case
-    make_case_plate(uh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
-    make_case_plate(lh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
-    
-def c(v: list):
-    return dcopy(v)
+    if make_case_plates:
+        make_case_plate(uh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
+        make_case_plate(lh + v1cross * 5.5/2 * inch - v1n * 5.5 / 2 * inch, -v1cross * (5.5 * inch + case_pitch), v1n * 5.5 * inch, axis)
+        
+def c(v: list | Vector):
+    if isinstance(v, list):
+        return Vector(v)
+    return Vector(v[:])
+
+
     
 class Hedron:
+    @staticmethod
+    def choose_next_from(vs, dot_prod, verts):
+        print (vs)
+        va, vb = vs
+        print (f"@ dot_prod: {dot_prod}")
+        print (f"@ verts:")
+        for v in verts:
+            print (f"   {v}")
+        dots = [Vector.dot(
+                    (vb - va).normalized(), 
+                    (vc - vb).normalized()) for vc in verts]
+        print (f"@ dots:")
+        for v in dots:
+            print (f"   {v}")
+        return c(verts[dots.index(max(dots))])
+        
+    def complete_cycle(self, cycle_idx):
+        print (f"Cycle #{cycle_idx}")
+        cyc = self.cycles[cycle_idx]
+        v0, v1, v2 = cyc
+        # always hemigon, mid_upper, top -> top, mid_upper, hemigon, mid_lower, bottom, bottom, mid_lower
+        dot_prod = Vector.dot((v1 - v0).normalized(), (v2 - v1).normalized())
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.top_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.mid_upper_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.hemigon_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.mid_lower_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.bottom_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.bottom_verts))
+        cyc.append(self.choose_next_from(cyc[-2:], dot_prod, self.mid_lower_verts))
+        
+
     def __init__(self, location, z_angle, radius):
         self.hemigon_verts = []
         self.mid_upper_verts = []
@@ -412,36 +451,55 @@ class Hedron:
         for n in range(5):
             upper_pent = make_rpn(n)
             lower_pent = make_rpn(n + 5)
-            self.hemigon_verts.append(upper_pent[0])
-            self.hemigon_verts.append(upper_pent[1])
-            self.mid_upper_verts.append(upper_pent[2])
-            self.mid_lower_verts.append(lower_pent[2])
-            self.top_verts.append(upper_pent[3])
-            self.bottom_verts.append(upper_pent[3])
+            self.hemigon_verts.append(c(upper_pent[0]))
+            self.hemigon_verts.append(c(upper_pent[1]))
+            self.mid_upper_verts.append(c(upper_pent[2]))
+            self.mid_lower_verts.append(c(lower_pent[2]))
         
         self.hemigon_verts =    [v * radius / v.length for v in self.hemigon_verts]
         self.mid_upper_verts =  [v * radius / v.length for v in self.mid_upper_verts]
         self.top_verts =        [v * radius / v.length for v in self.top_verts]
         self.mid_lower_verts =  [v * radius / v.length for v in self.mid_lower_verts]
         self.bottom_verts =     [v * radius / v.length for v in self.bottom_verts]
+
+        #for n in range(10):
+        #    self.edges_hemigon.append([c(self.hemigon_verts[n]), c(self.hemigon_verts[(n+1)%10])])
             
+        #for n in range(5):
+        #    self.edges_level1_upper.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_upper_verts[(n-1)%5])])
+        #    self.edges_level1_upper.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_upper_verts[(n)%5])])
+        #    self.edges_level2_upper.append([c(self.mid_upper_verts[n]), c(self.top_verts[(n+1)%5])])
+        #    self.edges_level2_upper.append([c(self.mid_upper_verts[(n+1)%5]), c(self.top_verts[(n+1)%5])])
+        #    self.edges_top_pent.append([c(self.top_verts[n]), c(self.top_verts[(n+1)%5])])
+
+        #    self.edges_level1_lower.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_lower_verts[(7-n)%5])])
+        #    self.edges_level1_lower.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_lower_verts[(7-n)%5])])
+        #    self.edges_level2_lower.append([c(self.mid_lower_verts[n]), c(self.bottom_verts[(n+1)%5])])
+        #    self.edges_level2_lower.append([c(self.mid_lower_verts[(n+1)%5]), c(self.bottom_verts[(n+1)%5])])
+        #    self.edges_bottom_pent.append([c(self.bottom_verts[n]), c(self.bottom_verts[(n+1)%5])])
+
+        self.cycles = [[],[],[],[],[],[]]
         for n in range(10):
-            self.edges_hemigon.append([c(self.hemigon_verts[n]), c(self.hemigon_verts[(n+1)%10])])
-            
-        for n in range(5):
-            self.edges_level1_upper.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_upper_verts[(n-1)%5])])
-            self.edges_level1_upper.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_upper_verts[(n)%5])])
-            self.edges_level2_upper.append([c(self.mid_upper_verts[n]), c(self.top_verts[(n+1)%5])])
-            self.edges_level2_upper.append([c(self.mid_upper_verts[(n+1)%5]), c(self.top_verts[(n+1)%5])])
-            self.edges_top_pent.append([c(self.top_verts[n]), c(self.top_verts[(n+1)%5])])
-
-            self.edges_level1_lower.append([c(self.hemigon_verts[(n*2)%10]), c(self.mid_lower_verts[(7-n)%5])])
-            self.edges_level1_lower.append([c(self.hemigon_verts[(n*2+1)%10]), c(self.mid_lower_verts[(7-n)%5])])
-            self.edges_level2_lower.append([c(self.mid_lower_verts[n]), c(self.bottom_verts[(n+1)%5])])
-            self.edges_level2_lower.append([c(self.mid_lower_verts[(n+1)%5]), c(self.bottom_verts[(n+1)%5])])
-            self.edges_bottom_pent.append([c(self.bottom_verts[n]), c(self.bottom_verts[(n+1)%5])])
-
-
+            self.cycles[0].append(c(self.hemigon_verts[n]))
+        self.cycles[1].append(c(self.hemigon_verts[0]))
+        self.cycles[1].append(c(self.mid_upper_verts[4]))
+        self.cycles[1].append(c(self.top_verts[4]))
+        self.cycles[2].append(c(self.hemigon_verts[1]))
+        self.cycles[2].append(c(self.mid_upper_verts[0]))
+        self.cycles[2].append(c(self.top_verts[1]))
+        self.cycles[3].append(c(self.hemigon_verts[2]))
+        self.cycles[3].append(c(self.mid_upper_verts[0]))
+        self.cycles[3].append(c(self.top_verts[0]))
+        self.cycles[4].append(c(self.hemigon_verts[3]))
+        self.cycles[4].append(c(self.mid_upper_verts[1]))
+        self.cycles[4].append(c(self.top_verts[2]))
+        self.cycles[5].append(c(self.hemigon_verts[4]))
+        self.cycles[5].append(c(self.mid_upper_verts[1]))
+        self.cycles[5].append(c(self.top_verts[1]))
+        for n in range(1, len(self.cycles)):
+            if len(self.cycles[n]) > 0:
+                self.complete_cycle(n)
+        
     def make_pents(self):
         for n in range(5):
             make_pentagon(f"upper_pent_mesh", f"upper_pent", [
@@ -460,9 +518,42 @@ class Hedron:
         make_pentagon(f"top_pent_mesh", "top_pent", self.top_verts)
         make_pentagon(f"bottom_pent_mesh", "bottom_pent", self.bottom_verts)
 
-    def iterate_edges(self):
-        return itertools.chain(self.edges_hemigon, self.edges_level1_upper, self.edges_level2_upper, 
-            self.edges_top_pent, self.edges_level1_lower, self.edges_level2_lower, self.edges_bottom_pent)
+    #def iterate_edges(self):
+    #    return itertools.chain(self.edges_hemigon, self.edges_level1_upper, self.edges_level2_upper, 
+    #        self.edges_top_pent, self.edges_level1_lower, self.edges_level2_lower, self.edges_bottom_pent)
+            
+    def get_cyclic_edges(self):
+        edges = []
+        for n in range(len(self.cycles)):
+            cycle = self.cycles[n]
+            for i in range(len(cycle)):
+                edges.append([cycle[i], cycle[(i+1)%len(cycle)]])
+        return edges
+    
+    def iterate_cyclic_edges(self):
+        class It:
+            def __init__(self, cycles):
+                self.cycles = cycles
+                self.cycle_idx = 0
+                self.cycle_iter_idx = 0
+            def __iter__(self):
+                return self
+            def __next__(self):
+                if self.cycle_idx >= len(self.cycles):
+                    raise StopIteration
+                if self.cycle_iter_idx >= len(self.cycles[self.cycle_idx]):
+                    self.cycle_iter_idx = 0
+                    self.cycle_idx += 1
+                if self.cycle_idx >= len(self.cycles):
+                    raise StopIteration
+                cyc = self.cycles[self.cycle_idx]
+                if self.cycle_iter_idx >= len(cyc):
+                    raise StopIteration
+                edge = [c(cyc[self.cycle_iter_idx]), c(cyc[(self.cycle_iter_idx + 1)%len(cyc)])]
+                self.cycle_iter_idx += 1
+                pre("cyclic", 0, edge)
+                return edge
+        return It(self.cycles)
     
     def report_edges(self):
         i = 0
@@ -471,16 +562,16 @@ class Hedron:
             i+=1
     
     def make_cyls(self):
-        for edge in self.iterate_edges():
+        for edge in self.iterate_cyclic_edges():
             make_cylinder(f"cyl_mesh", f"cyl", edge, 0.02)
     
     def make_crosses(self, num_segments_per_edge, strut_length, case_pitch):
         i = 0
-        for edge in self.iterate_edges():
+        for edge in self.iterate_cyclic_edges():
             pre(f"Edge{i}", 0, edge)
             make_crosses(edge, num_segments_per_edge, strut_length, case_pitch)
             #i += 1
-            #if i == 1:
+            #if i == 4:
             #    return
             
 
@@ -517,31 +608,6 @@ def make_icosidodecahedron():
     making_extents_2 = False
     making_extents_3 = True
     
-    if making_extents_3:
-        num_struts = 3
-        strut_length = 46*inch
-        case_pitch = 12*inch
-        alpha_min = radians(10)
-        alpha_max = tau / 4 - theta / num_struts - radians(5)
-        long_r, short_r = get_extents(3, strut_length, case_pitch, alpha_min, alpha_max)
-        h = Hedron((0, 0, 0), 0, long_r)
-        h.make_crosses(num_struts, strut_length, case_pitch)
-        h = Hedron((0, 0, 0), 0, short_r)
-        h.make_crosses(num_struts, strut_length, case_pitch)
-
-    if making_extents_2:
-        num_struts = 2
-        strut_length = 74*inch
-        case_pitch = 12*inch
-        alpha_min = radians(10)
-        alpha_max = tau / 4 - theta / num_struts - radians(5)
-        long_r, short_r = get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max)
-        h = Hedron((0, 0, 0), 0, long_r)
-        h.make_crosses(num_struts, strut_length, case_pitch)
-        h = Hedron((0, 0, 0), 0, short_r)
-        h.make_crosses(num_struts, strut_length, case_pitch)
-
-    
     if making_extents_1:
         num_struts = 1
         strut_length = 74*inch
@@ -551,9 +617,36 @@ def make_icosidodecahedron():
         long_r, short_r = get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max)
         h = Hedron((0, 0, 0), 0, long_r)
         h.make_crosses(num_struts, strut_length, case_pitch)
+        #h.make_pents()
+        #h.make_cyls()
+        #h = Hedron((0, 0, 0), 0, short_r)
+        #h.make_crosses(num_struts, strut_length, case_pitch)
+        
+    if making_extents_2:
+        num_struts = 2
+        strut_length = 74*inch
+        case_pitch = 12*inch
+        alpha_min = radians(10)
+        alpha_max = tau / 4 - theta / num_struts - radians(5)
+        long_r, short_r = get_extents(num_struts, strut_length, case_pitch, alpha_min, alpha_max)
+        h = Hedron((0, 0, 0), 0, long_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        #h = Hedron((0, 0, 0), 0, short_r)
+        #h.make_crosses(num_struts, strut_length, case_pitch)
+
+    if making_extents_3:
+        num_struts = 3
+        strut_length = 46*inch
+        case_pitch = 12*inch
+        alpha_min = radians(10)
+        alpha_max = tau / 4 - theta / num_struts - radians(5)
+        long_r, short_r = get_extents(3, strut_length, case_pitch, alpha_min, alpha_max)
+        h = Hedron((0, 0, 0), 0, long_r)
+        h.make_crosses(num_struts, strut_length, case_pitch)
+        #h.make_cyls()
         h = Hedron((0, 0, 0), 0, short_r)
         h.make_crosses(num_struts, strut_length, case_pitch)
-        
+
 
     #h = Hedron((0, 0, 0), 0, phi)
     #h.make_pents()
@@ -561,4 +654,18 @@ def make_icosidodecahedron():
 
 #reset_scene()
 make_icosidodecahedron()
+
+  # Enable Developer Extras (optional, but good practice)
+bpy.context.preferences.view.show_developer_ui = True
+
+# Enable displaying vertex indices in the 3D viewport
+# This requires overriding the context to the 3D viewport area
+# A more robust way would be to iterate through areas and find the 3D Viewport
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        for space in area.spaces:
+            if space.type == 'VIEW_3D':
+                space.overlay.show_extra_indices = True
+                break
+        break
 print ("---------------------------------------------")
